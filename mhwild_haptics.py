@@ -534,7 +534,7 @@ def do_fix(dd, timeout=15, retries=2):
         ensure_game_audio_on_hdmi(game_streams(), log)
         return True, "已就绪（触觉流已存在）"
 
-    any_stream = wait_for_any_game_stream(min(timeout, 5))
+    any_stream = wait_for_any_game_stream(min(timeout, 3))
     if not any_stream:
         return False, f"等不到 {GAME_NAME} 的音频流（游戏可能还在启动界面）"
     log(f"   游戏音频流 #{any_stream['index']}（{any_stream['_channels']}ch）"
@@ -550,13 +550,13 @@ def do_fix(dd, timeout=15, retries=2):
     try:
         for attempt in range(1, retries + 1):
             set_default_sink(ds5["name"])
-            four = wait_for_game_stream(4, 3)
+            four = wait_for_game_stream(4, 1.5)
             if four:
                 log(f"   ✔ 触觉流已建立：#{four['index']}，4ch → {ds5['name']}")
                 ok = True
                 break
             log(f"   第 {attempt}/{retries} 次 nudge 未成功，重试 ...")
-            time.sleep(0.5)
+            time.sleep(0.3)
     finally:
         try:
             set_default_sink(default_before)
@@ -591,12 +591,12 @@ def do_refresh(dd, timeout=20, retries=2):
     for attempt in range(1, retries + 1):
         try:
             set_default_sink(ds5["name"])
-            four = wait_for_game_stream(4, 3)
+            four = wait_for_game_stream(4, 1.5)
             if four:
                 log(f"✔ 触觉流存在：#{four['index']}")
                 return True, "触觉流已就绪"
             log(f"第 {attempt}/{retries} 次刷新未成功，重试 ...")
-            time.sleep(0.5)
+            time.sleep(0.3)
         finally:
             try:
                 set_default_sink(default_before)
