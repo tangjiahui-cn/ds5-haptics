@@ -260,6 +260,11 @@ const Content = () => {
             </Field>
           </PanelSectionRow>
         ) : null}
+        {message ? (
+          <PanelSectionRow>
+            <Field label="状态">{message}</Field>
+          </PanelSectionRow>
+        ) : null}
       </PanelSection>
 
       <div

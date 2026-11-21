@@ -379,7 +379,7 @@ class Plugin:
     async def _main(self):
         self._stop = False
         self._games = await asyncio.to_thread(_installed_games)
-        decky.logger.info("DS5-Haptics backend started (v0.4.16), games=%d", len(self._games))
+        decky.logger.info("DS5-Haptics backend started (v0.4.17), games=%d", len(self._games))
         await self._reset_detection_cache(self._plugin_version())
         await self._clear_failed_cache()
         # 清理上次异常退出可能残留的快照
