@@ -178,6 +178,7 @@ class Plugin:
     _desired_volume = 100
     _log_pos = 0
     _log_ok = False
+    _probe_4ch = None       # 本次运行的四声道探测结果：None/True/False
 
     # ---------------- 基础设施 ----------------
 
@@ -217,6 +218,7 @@ class Plugin:
             "wait_seconds": wait_left,
             "active_key": key,
             "effective": eff,
+            "probe_4ch": self._probe_4ch,
             "desired_volume": self._desired_volume,
             "wait_total": WAIT_SECONDS,
         }
@@ -236,15 +238,7 @@ class Plugin:
             return {"ok": True, "output": "已保存（进游戏后生效）", "enabled": enabled}
 
         if enabled:
-            st = await self._status()
-            live_4ch = any((x or {}).get("channels") == 4
-                           for x in ((st or {}).get("streams") or []))
-            if eff.get("haptics_4ch") is False and not live_4ch:
-                # 已知不支持：确保开关保持 false，允许再次点击重试
-                await self._engine_cmd("profile-set", key, "vibration_enabled", "false")
-                return {"ok": False,
-                        "error": "该游戏已知不支持四声道音频触觉（未实际尝试，可再次点击重试）"}
-
+            # 不再基于历史缓存阻止尝试：每次都实际探测，可重复开启
             # 先进入切换状态；成功后才把开关置为 true，失败保持 false
             self._phase = "switching"
             self._desired_volume = eff.get("volume", 100)
@@ -256,13 +250,11 @@ class Plugin:
                                            "--profile", key)
                     await self._engine_cmd("profile-set", key, "vibration_enabled", "true")
                     await self._engine_cmd("profile-set", key, "haptics_4ch", "true")
+                    self._probe_4ch = True
                 else:
                     await self._engine_cmd("restore", "--profile", key)
                     await self._engine_cmd("profile-set", key, "vibration_enabled", "false")
-                    detail = f'{r.get("output") or ""} {r.get("error") or ""}'
-                    if "nudge 多次失败" in detail:
-                        # 只有真正尝试过 nudge 且失败，才记为"不支持"
-                        await self._engine_cmd("profile-set", key, "haptics_4ch", "false")
+                    self._probe_4ch = False  # 仅本次运行内记录，不落盘缓存
             finally:
                 self._phase = "idle"
             return {"ok": r.get("ok", False), "output": r.get("output"), "error": r.get("error"),
@@ -318,9 +310,6 @@ class Plugin:
         profiles = await self._profiles()
         key, eff = self._effective(profiles)
         if not eff.get("vibration_enabled"):
-            return
-        if eff.get("haptics_4ch") is False:
-            decky.logger.info("auto enable skipped: known unsupported (haptics_4ch=false)")
             return {"ok": False, "error": "请先开启「启用震动」"}
         st = await self._status()
         if not (st or {}).get("sink_name"):
@@ -377,11 +366,22 @@ class Plugin:
             pass
         decky.logger.info("detection cache reset for version %s", version)
 
+    async def _clear_failed_cache(self):
+        """历史版本可能落盘过 haptics_4ch=false，这里统一清成 null（不再缓存失败）。"""
+        profiles = await self._profiles()
+        if not isinstance(profiles, dict):
+            return
+        for key, prof in profiles.items():
+            if isinstance(prof, dict) and prof.get("haptics_4ch") is False:
+                await self._engine_cmd("profile-set", key, "haptics_4ch", "null")
+                decky.logger.info("cleared failed 4ch cache: %s", key)
+
     async def _main(self):
         self._stop = False
         self._games = await asyncio.to_thread(_installed_games)
-        decky.logger.info("DS5-Haptics backend started (v0.4.12), games=%d", len(self._games))
+        decky.logger.info("DS5-Haptics backend started (v0.4.13), games=%d", len(self._games))
         await self._reset_detection_cache(self._plugin_version())
+        await self._clear_failed_cache()
         # 清理上次异常退出可能残留的快照
         try:
             if os.path.exists(os.path.join(DATA_DIR, "state.json")):
@@ -444,14 +444,12 @@ class Plugin:
     async def _on_game_start(self, game):
         self._current = {"appid": game["appid"], "name": game["name"]}
         self._phase = "idle"
+        self._probe_4ch = None
         decky.logger.info("game start: %s (%s)", game["name"], game["appid"])
         profiles = await self._profiles()
         key, eff = self._effective(profiles)
         self._desired_volume = eff.get("volume", 100)
         if not eff.get("vibration_enabled"):
-            return
-        if eff.get("haptics_4ch") is False:
-            decky.logger.info("auto enable skipped: known unsupported (haptics_4ch=false)")
             return
         # 自动启用：等 2ch 音频流出现，再延迟 WAIT_SECONDS
         self._phase = "waiting"
@@ -476,12 +474,11 @@ class Plugin:
                 await self._engine_cmd("volume", "set", str(self._desired_volume),
                                        "--profile", key)
                 await self._engine_cmd("profile-set", key, "haptics_4ch", "true")
+                self._probe_4ch = True
             else:
                 await self._engine_cmd("restore", "--profile", key)
                 await self._engine_cmd("profile-set", key, "vibration_enabled", "false")
-                detail = f'{r.get("output") or ""} {r.get("error") or ""}'
-                if "nudge 多次失败" in detail:
-                    await self._engine_cmd("profile-set", key, "haptics_4ch", "false")
+                self._probe_4ch = False
             decky.logger.info("auto enable: %s", r.get("ok"))
         finally:
             self._phase = "idle"
@@ -501,3 +498,4 @@ class Plugin:
         self._current = None
         self._phase = "idle"
         self._wait_until = 0.0
+        self._probe_4ch = None

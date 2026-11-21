@@ -21,6 +21,7 @@ type UiState = {
   active_key?: string;
   effective?: any;
   desired_volume?: number;
+  probe_4ch?: boolean | null;
 };
 
 const shortSink = (name?: string | null) => {
@@ -185,7 +186,7 @@ const Content = () => {
               ? "支持"
               : effective.haptics_4ch === true
                 ? "支持"
-                : effective.haptics_4ch === false
+                : ui.probe_4ch === false
                   ? "不支持"
                   : "待检测"}
           </Field>
