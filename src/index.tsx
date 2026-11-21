@@ -36,6 +36,7 @@ const Content = () => {
   const [volume, setVolume] = useState(150);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
+  const [vibeChecked, setVibeChecked] = useState(false);
   const volumeRef = useRef(150);
   const editRef = useRef(0);
   const debounce = useRef(0);
@@ -80,6 +81,11 @@ const Content = () => {
   const toggleLocked = lockedAll || switching;
   const refreshEnabled =
     !lockedAll && !switching && vibrationEnabled && gameRunning && sinkConnected;
+
+  // 开关显示跟随后端数据（失败回退/自动启用时都能正确重置）
+  useEffect(() => {
+    setVibeChecked(!!effective.vibration_enabled);
+  }, [ui]);
 
   // 同步显示值（未在拖动时）
   useEffect(() => {
@@ -128,10 +134,14 @@ const Content = () => {
     }, 350);
   };
 
-  const toggleVibration = (enabled: boolean) =>
-    wrap(enabled ? "启用震动" : "关闭震动", () =>
-      call("set_vibration_enabled", enabled),
-    );
+  const toggleVibration = (enabled: boolean) => {
+    setVibeChecked(enabled);
+    return wrap(enabled ? "启用震动" : "关闭震动", async () => {
+      const r = await call("set_vibration_enabled", enabled);
+      if (!r?.ok) setVibeChecked(false); // 失败立即回弹
+      return r;
+    });
+  };
 
   const togglePerGame = (enabled: boolean) =>
     wrap("按游戏配置文件", () => call("set_per_game_enabled", enabled));
@@ -204,7 +214,7 @@ const Content = () => {
           <ToggleField
             label="启用震动"
             description={vibrationDesc}
-            checked={vibrationEnabled}
+            checked={vibeChecked}
             disabled={busy || toggleLocked || !sinkConnected}
             onChange={toggleVibration}
           />
