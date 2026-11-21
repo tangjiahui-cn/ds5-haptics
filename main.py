@@ -234,6 +234,14 @@ class Plugin:
                                    "true" if enabled else "false")
             return {"ok": True, "output": "已保存（进游戏后生效）", "enabled": enabled}
 
+        if enabled:
+            st = await self._status()
+            live_4ch = any((x or {}).get("channels") == 4
+                           for x in ((st or {}).get("streams") or []))
+            if eff.get("haptics_4ch") is False and not live_4ch:
+                return {"ok": False,
+                        "error": "该游戏已知不支持四声道音频触觉（未实际尝试）"}
+
         await self._engine_cmd("profile-set", key, "vibration_enabled",
                                "true" if enabled else "false")
         if enabled:
@@ -245,9 +253,11 @@ class Plugin:
                     # 最后写入优先：切换结束后应用最新强度
                     await self._engine_cmd("volume", "set", str(self._desired_volume),
                                            "--profile", key)
+                    await self._engine_cmd("profile-set", key, "haptics_4ch", "true")
                 else:
                     await self._engine_cmd("restore", "--profile", key)
                     await self._engine_cmd("profile-set", key, "vibration_enabled", "false")
+                    await self._engine_cmd("profile-set", key, "haptics_4ch", "false")
             finally:
                 self._phase = "idle"
             return {"ok": r.get("ok", False), "output": r.get("output"), "error": r.get("error"),
@@ -301,6 +311,9 @@ class Plugin:
         profiles = await self._profiles()
         key, eff = self._effective(profiles)
         if not eff.get("vibration_enabled"):
+            return
+        if eff.get("haptics_4ch") is False:
+            decky.logger.info("auto enable skipped: known unsupported (haptics_4ch=false)")
             return {"ok": False, "error": "请先开启「启用震动」"}
         st = await self._status()
         if not (st or {}).get("sink_name"):
@@ -308,7 +321,9 @@ class Plugin:
         self._phase = "refreshing"
         try:
             code, out, err = await asyncio.to_thread(
-                _run_engine, self._current["name"], "refresh", "--timeout", "25")
+                _run_engine, self._current["name"], "refresh", "--timeout", "12")
+            if code == 0:
+                await self._engine_cmd("profile-set", key, "haptics_4ch", "true")
         finally:
             self._phase = "idle"
         return {"ok": code == 0, "output": out, "error": err}
@@ -317,13 +332,13 @@ class Plugin:
         """开启三连：apply -> restore -> apply。"""
         gname = (self._current or {}).get("name")
         r1 = await asyncio.to_thread(_run_engine, gname, "apply", "--profile", key,
-                                     "--timeout", "20")
+                                     "--timeout", "8")
         if r1[0] != 0:
             await asyncio.to_thread(_run_engine, gname, "restore", "--profile", key)
             return {"ok": False, "output": r1[1], "error": r1[2]}
         await asyncio.to_thread(_run_engine, gname, "restore", "--profile", key)
         r2 = await asyncio.to_thread(_run_engine, gname, "apply", "--profile", key,
-                                     "--timeout", "20")
+                                     "--timeout", "8")
         return {"ok": r2[0] == 0, "output": r2[1], "error": r2[2]}
 
     # ---------------- 生命周期 / 监视 ----------------
@@ -331,7 +346,7 @@ class Plugin:
     async def _main(self):
         self._stop = False
         self._games = await asyncio.to_thread(_installed_games)
-        decky.logger.info("DS5-Haptics backend started (v0.4.3), games=%d", len(self._games))
+        decky.logger.info("DS5-Haptics backend started (v0.4.6), games=%d", len(self._games))
         # 清理上次异常退出可能残留的快照
         try:
             if os.path.exists(os.path.join(DATA_DIR, "state.json")):
@@ -400,6 +415,9 @@ class Plugin:
         self._desired_volume = eff.get("volume", 100)
         if not eff.get("vibration_enabled"):
             return
+        if eff.get("haptics_4ch") is False:
+            decky.logger.info("auto enable skipped: known unsupported (haptics_4ch=false)")
+            return
         # 自动启用：等 2ch 音频流出现，再延迟 WAIT_SECONDS
         self._phase = "waiting"
         self._wait_until = time.time() + WAIT_SECONDS
@@ -422,9 +440,11 @@ class Plugin:
             if r.get("ok"):
                 await self._engine_cmd("volume", "set", str(self._desired_volume),
                                        "--profile", key)
+                await self._engine_cmd("profile-set", key, "haptics_4ch", "true")
             else:
                 await self._engine_cmd("restore", "--profile", key)
                 await self._engine_cmd("profile-set", key, "vibration_enabled", "false")
+                await self._engine_cmd("profile-set", key, "haptics_4ch", "false")
             decky.logger.info("auto enable: %s", r.get("ok"))
         finally:
             self._phase = "idle"

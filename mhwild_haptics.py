@@ -50,6 +50,7 @@ PROFILE_DEFAULTS = {
     "fix": True,                # 是否尝试建立 4 声道触觉流
     "volume": 100,              # 震动强度（%）
     "audio_out": "hdmi",        # 固定 HDMI
+    "haptics_4ch": None,        # 四声道支持：None=待检测 / True=支持 / False=不支持
 }
 
 # 当前操作的运行中游戏名（CLI 用 --game-name 指定）
@@ -475,7 +476,7 @@ def wait_for_mh_stream(channels, timeout):
     return wait_for_game_stream(channels, timeout)
 
 
-def do_fix(dd, timeout=15, retries=3):
+def do_fix(dd, timeout=15, retries=2):
     """
     核心修复：确保荒野的 4 声道触觉流建立在手柄上，
     且游戏 2ch 音频流固定在 HDMI。返回 (ok, message)。
@@ -487,7 +488,7 @@ def do_fix(dd, timeout=15, retries=3):
         print(msg)
 
     log(f"== 检查 {GAME_NAME} 音频流 ...")
-    two = wait_for_game_stream(2, timeout)
+    two = wait_for_game_stream(2, min(timeout, 5))
     if not two:
         return False, f"等不到 {GAME_NAME} 的 2ch 音频流（游戏可能还在启动界面）"
     log(f"   2ch 音频流 #{two['index']} → {sink_name_by_index(two['sink'])}")
@@ -508,13 +509,13 @@ def do_fix(dd, timeout=15, retries=3):
     try:
         for attempt in range(1, retries + 1):
             set_default_sink(ds5["name"])
-            four = wait_for_game_stream(4, 6)
+            four = wait_for_game_stream(4, 2.5)
             if four:
                 log(f"   ✔ 触觉流已建立：#{four['index']}，4ch → {ds5['name']}")
                 ok = True
                 break
             log(f"   第 {attempt}/{retries} 次 nudge 未成功，重试 ...")
-            time.sleep(0.8)
+            time.sleep(0.5)
     finally:
         try:
             set_default_sink(default_before)
@@ -532,7 +533,7 @@ def do_fix(dd, timeout=15, retries=3):
     return True, "修复完成"
 
 
-def do_refresh(dd, timeout=20, retries=3):
+def do_refresh(dd, timeout=20, retries=2):
     """强制 nudge 一次，尝试让游戏重建触觉流（不改变启用状态/档位/快照）。"""
     logs = []
 
@@ -549,12 +550,12 @@ def do_refresh(dd, timeout=20, retries=3):
     for attempt in range(1, retries + 1):
         try:
             set_default_sink(ds5["name"])
-            four = wait_for_game_stream(4, 6)
+            four = wait_for_game_stream(4, 2.5)
             if four:
                 log(f"✔ 触觉流存在：#{four['index']}")
                 return True, "触觉流已就绪"
             log(f"第 {attempt}/{retries} 次刷新未成功，重试 ...")
-            time.sleep(0.8)
+            time.sleep(0.5)
         finally:
             try:
                 set_default_sink(default_before)
@@ -820,6 +821,12 @@ def cmd_profile_set(args):
     prof = load_profile(dd, key)
     if field == "volume":
         prof["volume"] = max(0, min(int(value), 300))
+    elif field == "haptics_4ch":
+        v = str(value).strip().lower()
+        if v in ("", "null", "none", "unknown", "pending"):
+            prof[field] = None
+        else:
+            prof[field] = v in ("1", "true", "yes", "on", "supported")
     elif field in ("enabled", "vibration_enabled", "fix"):
         prof[field] = str(value).lower() in ("1", "true", "yes", "on")
     else:
