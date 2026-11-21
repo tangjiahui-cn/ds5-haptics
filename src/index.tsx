@@ -8,6 +8,7 @@ import {
   SliderField,
   ToggleField,
 } from "@decky/ui";
+import { PLUGIN_VERSION } from "./version";
 
 type UiState = {
   status?: any;
@@ -246,6 +247,18 @@ const Content = () => {
           </PanelSectionRow>
         ) : null}
       </PanelSection>
+
+      <div
+        style={{
+          textAlign: "center",
+          padding: "8px 0 12px",
+          fontSize: 11,
+          color: "#7f8c99",
+          letterSpacing: "0.05em",
+        }}
+      >
+        v{PLUGIN_VERSION}
+      </div>
     </>
   );
 };

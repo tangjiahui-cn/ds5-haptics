@@ -1,10 +1,10 @@
 {
   "name": "ds5-haptics",
-  "version": "0.4.3",
+  "version": "0.4.4",
   "description": "MHWild_PS5震动修复 Decky plugin",
   "type": "module",
   "scripts": {
-    "build": "rollup -c"
+    "build": "node scripts/gen-version.mjs && rollup -c"
   },
   "devDependencies": {
     "@decky/rollup": "^1.0.1",
