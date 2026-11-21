@@ -105,8 +105,37 @@ def list_sinks():
     return pactl_json("list", "sinks") or []
 
 
+def _sink_input_app_names():
+    """从 pactl 文本输出解析 application.name（JSON 对非 ASCII 名字会输出 (null)）。"""
+    code, out, _ = run(["pactl", "list", "sink-inputs"])
+    if code != 0:
+        return {}
+    names = {}
+    for block in out.split("Sink Input #")[1:]:
+        head, _, rest = block.partition("\n")
+        idx = head.strip()
+        m = re.search(r'^\s*application\.name = "([^"]*)"', rest, re.M)
+        if m and m.group(1) and m.group(1) != "(null)":
+            names[idx] = m.group(1)
+    return names
+
+
 def list_sink_inputs():
-    return pactl_json("list", "sink-inputs") or []
+    data = pactl_json("list", "sink-inputs") or []
+    try:
+        names = _sink_input_app_names()
+    except Exception:
+        names = {}
+    for si in data:
+        props = si.setdefault("properties", {})
+        nm = names.get(str(si.get("index")))
+        if not nm:
+            continue
+        if not props.get("application.name") or props.get("application.name") == "(null)":
+            props["application.name"] = nm
+        if not props.get("node.name") or props.get("node.name") == "(null)":
+            props["node.name"] = nm
+    return data
 
 
 def find_dualsense_sink():
@@ -407,13 +436,13 @@ def read_system_haptic_percent(_dd=None):
 
 # ---------------------------------------------------------------- 修复流程
 
-def move_game_streams_to(sink_name, log=print, channels=(2,)):
-    """把当前游戏的指定声道音频流（默认 2ch）移动到目标 sink。"""
+def move_game_streams_to(sink_name, log=print, keep_channels=(4,)):
+    """把当前游戏的音频流移动到目标 sink（默认保留 4ch 触觉流不动）。"""
     if not sink_name:
         return False
     moved = False
     for st in game_streams():
-        if st.get("_channels") not in channels:
+        if st.get("_channels") in keep_channels:
             continue
         cur = sink_name_by_index(st.get("sink"))
         if cur == sink_name:
@@ -450,7 +479,7 @@ def ensure_game_audio_on_hdmi(streams, log):
         return False
     moved = False
     for s in streams:
-        if s.get("_channels") == 2 and s.get("sink") != hdmi["index"]:
+        if s.get("_channels") not in (None, 4) and s.get("sink") != hdmi["index"]:
             pactl("move-sink-input", str(s["index"]), hdmi["name"])
             log(f"   游戏音频流 #{s['index']} → HDMI")
             moved = True
@@ -463,6 +492,17 @@ def wait_for_game_stream(channels, timeout):
         found = find_stream(game_streams(), channels)
         if found:
             return found
+        time.sleep(0.3)
+    return None
+
+
+def wait_for_any_game_stream(timeout):
+    """等待游戏出现任意声道的音频流（不强制 2ch，兼容 12ch 等输出）。"""
+    t0 = time.time()
+    while time.time() - t0 < timeout:
+        streams = game_streams()
+        if streams:
+            return max(streams, key=lambda x: x.get("_channels") or 0)
         time.sleep(0.3)
     return None
 
@@ -488,16 +528,17 @@ def do_fix(dd, timeout=15, retries=2):
         print(msg)
 
     log(f"== 检查 {GAME_NAME} 音频流 ...")
-    two = wait_for_game_stream(2, min(timeout, 5))
-    if not two:
-        return False, f"等不到 {GAME_NAME} 的 2ch 音频流（游戏可能还在启动界面）"
-    log(f"   2ch 音频流 #{two['index']} → {sink_name_by_index(two['sink'])}")
-
     four = find_stream(game_streams(), 4)
     if four:
         log(f"   4ch 触觉流已存在（#{four['index']}），无需 nudge")
         ensure_game_audio_on_hdmi(game_streams(), log)
         return True, "已就绪（触觉流已存在）"
+
+    any_stream = wait_for_any_game_stream(min(timeout, 5))
+    if not any_stream:
+        return False, f"等不到 {GAME_NAME} 的音频流（游戏可能还在启动界面）"
+    log(f"   游戏音频流 #{any_stream['index']}（{any_stream['_channels']}ch）"
+        f" → {sink_name_by_index(any_stream['sink'])}")
 
     ds5 = find_dualsense_sink()
     if not ds5:
@@ -509,7 +550,7 @@ def do_fix(dd, timeout=15, retries=2):
     try:
         for attempt in range(1, retries + 1):
             set_default_sink(ds5["name"])
-            four = wait_for_game_stream(4, 2.5)
+            four = wait_for_game_stream(4, 3)
             if four:
                 log(f"   ✔ 触觉流已建立：#{four['index']}，4ch → {ds5['name']}")
                 ok = True
@@ -550,7 +591,7 @@ def do_refresh(dd, timeout=20, retries=2):
     for attempt in range(1, retries + 1):
         try:
             set_default_sink(ds5["name"])
-            four = wait_for_game_stream(4, 2.5)
+            four = wait_for_game_stream(4, 3)
             if four:
                 log(f"✔ 触觉流存在：#{four['index']}")
                 return True, "触觉流已就绪"
@@ -594,7 +635,7 @@ def do_apply(dd, profile_key=None, timeout=15):
         # 无论成功失败，都把默认输出恢复到 profile 指定的输出（默认 HDMI）
         try:
             set_default_sink(target_output_sink(prof))
-            move_game_streams_to(get_default_sink(), print, channels=(2,))
+            move_game_streams_to(get_default_sink(), print)
         except Exception as e:
             print(f"!! 恢复默认输出失败：{e}")
         return ok, msg
@@ -615,7 +656,7 @@ def do_restore(dd, profile_key=None):
             target = get_default_sink()
         elif target != get_default_sink():
             set_default_sink(target)
-        move_game_streams_to(target, print, channels=(2,))
+        move_game_streams_to(target, print)
     except Exception as e:
         print(f"!! 恢复音频输出失败：{e}")
     return True, "；".join(msgs)

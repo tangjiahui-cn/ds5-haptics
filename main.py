@@ -14,6 +14,7 @@ v0.4 模型：
 import asyncio
 import glob as globmod
 import json
+import json
 import os
 import re
 import subprocess
@@ -258,7 +259,10 @@ class Plugin:
                 else:
                     await self._engine_cmd("restore", "--profile", key)
                     await self._engine_cmd("profile-set", key, "vibration_enabled", "false")
-                    await self._engine_cmd("profile-set", key, "haptics_4ch", "false")
+                    detail = f'{r.get("output") or ""} {r.get("error") or ""}'
+                    if "nudge 多次失败" in detail:
+                        # 只有真正尝试过 nudge 且失败，才记为"不支持"
+                        await self._engine_cmd("profile-set", key, "haptics_4ch", "false")
             finally:
                 self._phase = "idle"
             return {"ok": r.get("ok", False), "output": r.get("output"), "error": r.get("error"),
@@ -346,10 +350,38 @@ class Plugin:
 
     # ---------------- 生命周期 / 监视 ----------------
 
+    def _plugin_version(self):
+        try:
+            with open(os.path.join(decky.DECKY_PLUGIN_DIR, "package.json"), encoding="utf-8") as f:
+                return json.load(f).get("version", "0")
+        except Exception:
+            return "0"
+
+    async def _reset_detection_cache(self, version):
+        """插件版本变化时重置 haptics_4ch 缓存（避免旧逻辑的误判一直生效）。"""
+        marker = os.path.join(DATA_DIR, ".version_marker")
+        try:
+            old = open(marker, encoding="utf-8").read().strip()
+        except OSError:
+            old = ""
+        if old == version:
+            return
+        profiles = await self._profiles()
+        if isinstance(profiles, dict):
+            for key in profiles:
+                await self._engine_cmd("profile-set", key, "haptics_4ch", "null")
+        try:
+            with open(marker, "w", encoding="utf-8") as f:
+                f.write(version)
+        except OSError:
+            pass
+        decky.logger.info("detection cache reset for version %s", version)
+
     async def _main(self):
         self._stop = False
         self._games = await asyncio.to_thread(_installed_games)
-        decky.logger.info("DS5-Haptics backend started (v0.4.6), games=%d", len(self._games))
+        decky.logger.info("DS5-Haptics backend started (v0.4.12), games=%d", len(self._games))
+        await self._reset_detection_cache(self._plugin_version())
         # 清理上次异常退出可能残留的快照
         try:
             if os.path.exists(os.path.join(DATA_DIR, "state.json")):
@@ -447,7 +479,9 @@ class Plugin:
             else:
                 await self._engine_cmd("restore", "--profile", key)
                 await self._engine_cmd("profile-set", key, "vibration_enabled", "false")
-                await self._engine_cmd("profile-set", key, "haptics_4ch", "false")
+                detail = f'{r.get("output") or ""} {r.get("error") or ""}'
+                if "nudge 多次失败" in detail:
+                    await self._engine_cmd("profile-set", key, "haptics_4ch", "false")
             decky.logger.info("auto enable: %s", r.get("ok"))
         finally:
             self._phase = "idle"
