@@ -241,17 +241,22 @@ class Plugin:
             self._desired_volume = eff.get("volume", 100)
             try:
                 r = await self._apply_sequence(key)
-                # 最后写入优先：切换结束后应用最新强度
-                await self._engine_cmd("volume", "set", str(self._desired_volume), "--profile", key)
+                if r.get("ok"):
+                    # 最后写入优先：切换结束后应用最新强度
+                    await self._engine_cmd("volume", "set", str(self._desired_volume),
+                                           "--profile", key)
+                else:
+                    await self._engine_cmd("restore", "--profile", key)
+                    await self._engine_cmd("profile-set", key, "vibration_enabled", "false")
             finally:
                 self._phase = "idle"
             return {"ok": r.get("ok", False), "output": r.get("output"), "error": r.get("error"),
-                    "enabled": True}
+                    "enabled": bool(r.get("ok"))}
         # 关闭：立即恢复
         self._phase = "switching"
         try:
             code, out, err = await asyncio.to_thread(
-                _run_engine, (self._current or {}).get("name"), "restore")
+                _run_engine, (self._current or {}).get("name"), "restore", "--profile", key)
         finally:
             self._phase = "idle"
         return {"ok": code == 0, "output": out, "error": err, "enabled": False}
@@ -314,8 +319,9 @@ class Plugin:
         r1 = await asyncio.to_thread(_run_engine, gname, "apply", "--profile", key,
                                      "--timeout", "20")
         if r1[0] != 0:
+            await asyncio.to_thread(_run_engine, gname, "restore", "--profile", key)
             return {"ok": False, "output": r1[1], "error": r1[2]}
-        await asyncio.to_thread(_run_engine, gname, "restore")
+        await asyncio.to_thread(_run_engine, gname, "restore", "--profile", key)
         r2 = await asyncio.to_thread(_run_engine, gname, "apply", "--profile", key,
                                      "--timeout", "20")
         return {"ok": r2[0] == 0, "output": r2[1], "error": r2[2]}
@@ -325,7 +331,14 @@ class Plugin:
     async def _main(self):
         self._stop = False
         self._games = await asyncio.to_thread(_installed_games)
-        decky.logger.info("MHWild_PS5_haptics backend started (v0.4.0), games=%d", len(self._games))
+        decky.logger.info("DS5-Haptics backend started (v0.4.3), games=%d", len(self._games))
+        # 清理上次异常退出可能残留的快照
+        try:
+            if os.path.exists(os.path.join(DATA_DIR, "state.json")):
+                await asyncio.to_thread(_run_engine, "", "restore")
+                decky.logger.info("cleaned leftover snapshot on startup")
+        except Exception as e:  # noqa: BLE001
+            decky.logger.error(f"cleanup snapshot failed: {e}")
         asyncio.create_task(self._watch())
 
     async def _unload(self):
@@ -406,7 +419,12 @@ class Plugin:
         self._phase = "switching"
         try:
             r = await self._apply_sequence(key)
-            await self._engine_cmd("volume", "set", str(self._desired_volume), "--profile", key)
+            if r.get("ok"):
+                await self._engine_cmd("volume", "set", str(self._desired_volume),
+                                       "--profile", key)
+            else:
+                await self._engine_cmd("restore", "--profile", key)
+                await self._engine_cmd("profile-set", key, "vibration_enabled", "false")
             decky.logger.info("auto enable: %s", r.get("ok"))
         finally:
             self._phase = "idle"
@@ -416,8 +434,10 @@ class Plugin:
         try:
             st = await self._status()
             if isinstance(st, dict) and st.get("snapshot"):
+                profiles = await self._profiles()
+                key, _ = self._effective(profiles)
                 await asyncio.to_thread(
-                    _run_engine, (self._current or {}).get("name"), "restore")
+                    _run_engine, (self._current or {}).get("name"), "restore", "--profile", key)
                 decky.logger.info("auto restore on exit")
         except Exception as e:  # noqa: BLE001
             decky.logger.error(f"restore on exit failed: {e}")

@@ -135,16 +135,36 @@ def find_hdmi_sink(fallback_name=None):
     return None
 
 
+def _alnum(text):
+    return re.sub(r"[^a-z0-9]", "", (text or "").lower())
+
+
 def game_streams(inputs=None, game_name=None):
-    """返回当前游戏（默认 MHW）的音频流列表（含 2ch / 4ch）。"""
-    name = (game_name or GAME_NAME or "").lower()
+    """返回当前游戏的音频流列表（含 2ch / 4ch）。
+
+    匹配规则（容错 Wine/Proton 的 app name 差异）：
+      1) 原字符串（小写）相等 / 互相包含；
+      2) 去掉空格和标点后（alnum）互相包含或前 12 位相同，例如
+         "Monster Hunter Rise" ↔ "MonsterHunterRise.exe"。
+    """
+    raw_name = game_name or GAME_NAME or ""
+    name = raw_name.lower()
+    norm_name = _alnum(raw_name)
     inputs = inputs if inputs is not None else list_sink_inputs()
     out = []
     for si in inputs:
         app = ((si.get("properties") or {}).get("application.name", "") or "").lower()
         if not app or not name:
             continue
-        if app == name or name in app or app in name:
+        norm_app = _alnum(app)
+        matched = app == name or name in app or app in name
+        if not matched and norm_name and norm_app:
+            if norm_name in norm_app or norm_app in norm_name:
+                matched = True
+            elif len(norm_name) >= 12 and len(norm_app) >= 12 \
+                    and norm_name[:12] == norm_app[:12]:
+                matched = True
+        if matched:
             si["_channels"] = channel_count(si.get("sample_specification"))
             out.append(si)
     return out
@@ -386,8 +406,43 @@ def read_system_haptic_percent(_dd=None):
 
 # ---------------------------------------------------------------- 修复流程
 
+def move_game_streams_to(sink_name, log=print, channels=(2,)):
+    """把当前游戏的指定声道音频流（默认 2ch）移动到目标 sink。"""
+    if not sink_name:
+        return False
+    moved = False
+    for st in game_streams():
+        if st.get("_channels") not in channels:
+            continue
+        cur = sink_name_by_index(st.get("sink"))
+        if cur == sink_name:
+            continue
+        pactl("move-sink-input", str(st["index"]), sink_name)
+        log(f"   游戏音频流 #{st['index']}（{st.get('_channels')}ch）{cur} → {sink_name}")
+        moved = True
+    return moved
+
+
+def hdmi_or_default_sink(name):
+    """name 是 DualSense 时返回 HDMI sink，否则原样返回。"""
+    ds5 = find_dualsense_sink()
+    if ds5 and name == ds5["name"]:
+        hdmi = find_hdmi_sink()
+        return hdmi["name"] if hdmi else name
+    return name
+
+
+def target_output_sink(prof=None):
+    """profile.audio_out = hdmi 时优先返回 HDMI sink，否则返回当前默认输出。"""
+    if prof and str(prof.get("audio_out", "hdmi")).lower() == "hdmi":
+        hdmi = find_hdmi_sink()
+        if hdmi:
+            return hdmi["name"]
+    return get_default_sink()
+
+
 def ensure_game_audio_on_hdmi(streams, log):
-    """把荒野的 2ch 游戏音频流挪到 HDMI。"""
+    """把当前游戏的 2ch 音频流挪到 HDMI。"""
     hdmi = find_hdmi_sink()
     if not hdmi:
         log("!! 未找到 HDMI sink，跳过音频路由")
@@ -431,19 +486,16 @@ def do_fix(dd, timeout=15, retries=3):
         logs.append(msg)
         print(msg)
 
-    if not game_running():
-        return False, "荒野未运行：请先启动游戏再修复"
-
-    log("== 检查荒野音频流 ...")
+    log(f"== 检查 {GAME_NAME} 音频流 ...")
     two = wait_for_game_stream(2, timeout)
     if not two:
-        return False, "等不到荒野的 2ch 音频流（游戏可能还在启动界面）"
+        return False, f"等不到 {GAME_NAME} 的 2ch 音频流（游戏可能还在启动界面）"
     log(f"   2ch 音频流 #{two['index']} → {sink_name_by_index(two['sink'])}")
 
-    four = find_stream(mh_streams(), 4)
+    four = find_stream(game_streams(), 4)
     if four:
         log(f"   4ch 触觉流已存在（#{four['index']}），无需 nudge")
-        ensure_game_audio_on_hdmi(mh_streams(), log)
+        ensure_game_audio_on_hdmi(game_streams(), log)
         return True, "已就绪（触觉流已存在）"
 
     ds5 = find_dualsense_sink()
@@ -466,14 +518,17 @@ def do_fix(dd, timeout=15, retries=3):
     finally:
         try:
             set_default_sink(default_before)
-            log(f"   已恢复默认输出：{default_before}")
+            audio_target = hdmi_or_default_sink(default_before)
+            log(f"   已恢复默认输出：{default_before}，游戏音频 → {audio_target}")
+            # 关键：把游戏音频流也挪回去（否则默认输出恢复了、声音还留在手柄上）
+            move_game_streams_to(audio_target, log)
         except Exception as e:
-            log(f"!! 恢复默认输出失败：{e}")
+            log(f"!! 恢复默认输出/音频流失败：{e}")
 
     if not ok:
         return False, "nudge 多次失败：游戏没有建立触觉流（可能需要换游戏版本/Proton）"
 
-    ensure_game_audio_on_hdmi(mh_streams(), log)
+    ensure_game_audio_on_hdmi(game_streams(), log)
     return True, "修复完成"
 
 
@@ -503,6 +558,7 @@ def do_refresh(dd, timeout=20, retries=3):
         finally:
             try:
                 set_default_sink(default_before)
+                move_game_streams_to(hdmi_or_default_sink(default_before), log)
             except Exception:
                 pass
     if overall:
@@ -512,7 +568,7 @@ def do_refresh(dd, timeout=20, retries=3):
 
 def do_apply(dd, profile_key=None, timeout=15):
     """按 profile 应用：音量 + 修复。供自动模式（插件 watcher）调用。"""
-    running = game_running()
+    running = bool(game_streams()) or game_running()
     key = profile_key or active_profile_key(dd, running)
     prof = load_profile(dd, key)
     print(f"== 应用 profile: {key} (vibration={prof['vibration_enabled']}, volume={prof['volume']}%, fix={prof['fix']})")
@@ -534,17 +590,33 @@ def do_apply(dd, profile_key=None, timeout=15):
 
     if prof.get("fix", False):
         ok, msg = do_fix(dd, timeout=timeout)
+        # 无论成功失败，都把默认输出恢复到 profile 指定的输出（默认 HDMI）
+        try:
+            set_default_sink(target_output_sink(prof))
+            move_game_streams_to(get_default_sink(), print, channels=(2,))
+        except Exception as e:
+            print(f"!! 恢复默认输出失败：{e}")
         return ok, msg
     return True, "音量已应用（未执行 fix）"
 
 
-def do_restore(dd):
-    """退出游戏：恢复到"进入游戏前"的音频大小和默认输出。"""
+def do_restore(dd, profile_key=None):
+    """退出游戏/关闭启用震动：恢复到"进入游戏前"的音频大小和默认输出。"""
     msgs = []
     st = load_state(dd)
     if st:
         msgs.append("恢复进入游戏前快照")
     msgs.append(restore_system(dd))
+    try:
+        prof = load_profile(dd, profile_key) if profile_key else {}
+        target = hdmi_or_default_sink(get_default_sink())
+        if prof.get("audio_out", "hdmi") != "hdmi":
+            target = get_default_sink()
+        elif target != get_default_sink():
+            set_default_sink(target)
+        move_game_streams_to(target, print, channels=(2,))
+    except Exception as e:
+        print(f"!! 恢复音频输出失败：{e}")
     return True, "；".join(msgs)
 
 
@@ -641,7 +713,7 @@ def cmd_refresh(args):
 
 def cmd_restore(args):
     dd = data_dir(args)
-    ok, msg = do_restore(dd)
+    ok, msg = do_restore(dd, profile_key=getattr(args, "profile", None))
     print(("✔ " if ok else "✘ ") + msg)
     return 0 if ok else 1
 
@@ -776,7 +848,9 @@ def main():
     p.add_argument("--profile", default=None, help="指定 profile key（默认按当前游戏/global）")
     p.add_argument("--timeout", type=int, default=15)
     p.set_defaults(func=cmd_apply)
-    p = sub.add_parser("restore"); p.set_defaults(func=cmd_restore)
+    p = sub.add_parser("restore")
+    p.add_argument("--profile", default=None)
+    p.set_defaults(func=cmd_restore)
     p = sub.add_parser("refresh")
     p.add_argument("--timeout", type=int, default=20)
     p.set_defaults(func=cmd_refresh)
