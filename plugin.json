@@ -1,0 +1,15 @@
+{
+  "name": "DS5-Haptics",
+  "author": "deck",
+  "flags": [],
+  "api_version": 1,
+  "publish": {
+    "tags": [
+      "haptics",
+      "dualsense",
+      "audio",
+      "怪物猎人荒野"
+    ],
+    "description": "为《怪物猎人荒野》修复 DualSense(PS5) 手柄震动/触觉：自动建立触觉音频流、按游戏保存音量档位，支持一键修复与自动修复。"
+  }
+}

@@ -1,0 +1,56 @@
+name: Build Decky Plugin
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build frontend
+        run: npm run build
+
+      - name: Package Decky plugin zip
+        run: |
+          set -euo pipefail
+          STAGE="out/DS5-Haptics"
+          rm -rf out
+          mkdir -p "$STAGE/dist"
+          cp plugin.json package.json main.py mhwild_haptics.py "$STAGE/"
+          cp dist/index.js "$STAGE/dist/"
+          (cd out && zip -r ../DS5-Haptics.zip DS5-Haptics)
+          echo "== package contents =="
+          unzip -l DS5-Haptics.zip
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: DS5-Haptics
+          path: DS5-Haptics.zip
+          if-no-files-found: error
+
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: DS5-Haptics.zip
+          generate_release_notes: true
