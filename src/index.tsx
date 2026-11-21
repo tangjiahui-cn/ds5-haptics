@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { call, definePlugin, toaster } from "@decky/api";
+import { call, definePlugin } from "@decky/api";
 import {
   ButtonItem,
   Field,
@@ -36,6 +36,7 @@ const Content = () => {
   const [ui, setUi] = useState<UiState>({});
   const [volume, setVolume] = useState(150);
   const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
   const [vibeChecked, setVibeChecked] = useState(false);
   const volumeRef = useRef(150);
   const editRef = useRef(0);
@@ -97,12 +98,9 @@ const Content = () => {
   }, [strength, desiredVolume, switching]);
 
   const notify = (label: string, r: any) => {
-    if (r?.ok === false || r?.error) {
-      const retry = label === "启用震动" ? "（可再次点击重试）" : "";
-      toaster.toast({ title: "DS5-Haptics", body: `${label}失败：${r?.error || ""}${retry}` });
-    } else {
-      toaster.toast({ title: "DS5-Haptics", body: `${label}：${r?.output || "完成"}` });
-    }
+    if (label !== "启用震动" && label !== "关闭震动") return;
+    const ok = r?.ok !== false && !r?.error;
+    setMessage(ok ? "切换成功" : "切换失败");
   };
 
   const wrap = async (label: string, fn: () => Promise<any>) => {
@@ -112,7 +110,7 @@ const Content = () => {
       const r = await fn();
       notify(label, r);
     } catch (e: any) {
-      toaster.toast({ title: "DS5-Haptics", body: `${label}异常：${e?.message || e}` });
+      console.error(`${label} exception`, e);
     } finally {
       setBusy(false);
       refresh();
@@ -126,11 +124,8 @@ const Content = () => {
     if (debounce.current) window.clearTimeout(debounce.current);
     debounce.current = window.setTimeout(() => {
       call("set_volume", value).then((r: any) => {
-        if (r?.ok === false || r?.error)
-          toaster.toast({ title: "DS5-Haptics", body: `设置强度失败：${r?.error || ""}` });
-        else if (switching)
-          toaster.toast({ title: "DS5-Haptics", body: `已记录 ${value}%（切换结束后生效）` });
-        else toaster.toast({ title: "DS5-Haptics", body: `震动强度 ${value}%` });
+        if (r?.ok === false || r?.error) console.error("set_volume failed", r);
+        else if (switching) console.log("set_volume recorded", value);
         refresh();
       });
     }, 350);
