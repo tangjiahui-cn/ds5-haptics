@@ -253,7 +253,7 @@ const Content = () => {
           textAlign: "center",
           padding: "8px 0 12px",
           fontSize: 11,
-          color: "#7f8c99",
+          color: "#333a42",
           letterSpacing: "0.05em",
         }}
       >
