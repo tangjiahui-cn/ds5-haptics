@@ -239,12 +239,12 @@ class Plugin:
             live_4ch = any((x or {}).get("channels") == 4
                            for x in ((st or {}).get("streams") or []))
             if eff.get("haptics_4ch") is False and not live_4ch:
+                # 已知不支持：确保开关保持 false，允许再次点击重试
+                await self._engine_cmd("profile-set", key, "vibration_enabled", "false")
                 return {"ok": False,
-                        "error": "该游戏已知不支持四声道音频触觉（未实际尝试）"}
+                        "error": "该游戏已知不支持四声道音频触觉（未实际尝试，可再次点击重试）"}
 
-        await self._engine_cmd("profile-set", key, "vibration_enabled",
-                               "true" if enabled else "false")
-        if enabled:
+            # 先进入切换状态；成功后才把开关置为 true，失败保持 false
             self._phase = "switching"
             self._desired_volume = eff.get("volume", 100)
             try:
@@ -253,6 +253,7 @@ class Plugin:
                     # 最后写入优先：切换结束后应用最新强度
                     await self._engine_cmd("volume", "set", str(self._desired_volume),
                                            "--profile", key)
+                    await self._engine_cmd("profile-set", key, "vibration_enabled", "true")
                     await self._engine_cmd("profile-set", key, "haptics_4ch", "true")
                 else:
                     await self._engine_cmd("restore", "--profile", key)
@@ -262,7 +263,9 @@ class Plugin:
                 self._phase = "idle"
             return {"ok": r.get("ok", False), "output": r.get("output"), "error": r.get("error"),
                     "enabled": bool(r.get("ok"))}
+
         # 关闭：立即恢复
+        await self._engine_cmd("profile-set", key, "vibration_enabled", "false")
         self._phase = "switching"
         try:
             code, out, err = await asyncio.to_thread(

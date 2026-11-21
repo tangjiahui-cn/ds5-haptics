@@ -92,7 +92,8 @@ const Content = () => {
 
   const notify = (label: string, r: any) => {
     if (r?.ok === false || r?.error) {
-      setMessage(`${label}失败：${r?.error || ""}`);
+      const retry = label === "启用震动" ? "（可再次点击重试）" : "";
+      setMessage(`${label}失败：${r?.error || ""}${retry}`);
     } else {
       setMessage(`${label}：${r?.output || "完成"}`);
     }
