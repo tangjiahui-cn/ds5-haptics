@@ -318,7 +318,7 @@ class Plugin:
             code, out, err = await asyncio.to_thread(
                 _run_engine, self._current["name"], "refresh", "--timeout", "12")
             if code == 0:
-                await self._engine_cmd("profile-set", key, "haptics_4ch", "true")
+                self._probe_4ch = True
         finally:
             self._phase = "idle"
         return {"ok": code == 0, "output": out, "error": err}
@@ -338,47 +338,10 @@ class Plugin:
 
     # ---------------- 生命周期 / 监视 ----------------
 
-    def _plugin_version(self):
-        try:
-            with open(os.path.join(decky.DECKY_PLUGIN_DIR, "package.json"), encoding="utf-8") as f:
-                return json.load(f).get("version", "0")
-        except Exception:
-            return "0"
-
-    async def _reset_detection_cache(self, version):
-        """插件版本变化时重置 haptics_4ch 缓存（避免旧逻辑的误判一直生效）。"""
-        marker = os.path.join(DATA_DIR, ".version_marker")
-        try:
-            old = open(marker, encoding="utf-8").read().strip()
-        except OSError:
-            old = ""
-        if old == version:
-            return
-        profiles = await self._profiles()
-        if isinstance(profiles, dict):
-            for key in profiles:
-                await self._engine_cmd("profile-set", key, "haptics_4ch", "null")
-        try:
-            with open(marker, "w", encoding="utf-8") as f:
-                f.write(version)
-        except OSError:
-            pass
-        decky.logger.info("detection cache reset for version %s", version)
-
-    async def _clear_failed_cache(self):
-        """历史版本可能落盘过 haptics_4ch=false，这里统一清成 null（不再缓存失败）。"""
-        profiles = await self._profiles()
-        if not isinstance(profiles, dict):
-            return
-        for key, prof in profiles.items():
-            if isinstance(prof, dict) and prof.get("haptics_4ch") is False:
-                await self._engine_cmd("profile-set", key, "haptics_4ch", "null")
-                decky.logger.info("cleared failed 4ch cache: %s", key)
-
     async def _main(self):
         self._stop = False
         self._games = await asyncio.to_thread(_installed_games)
-        decky.logger.info("DS5-Haptics backend started (v0.4.18), games=%d", len(self._games))
+        decky.logger.info("DS5-Haptics backend started (v0.4.19), games=%d", len(self._games))
         # 清理上次异常退出可能残留的快照
         try:
             if os.path.exists(os.path.join(DATA_DIR, "state.json")):
