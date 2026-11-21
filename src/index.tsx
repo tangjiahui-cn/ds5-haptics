@@ -178,13 +178,7 @@ const Content = () => {
         </PanelSectionRow>
         <PanelSectionRow>
           <Field label="四声道">
-            {hapticStream
-              ? "支持"
-              : effective.haptics_4ch === true
-                ? "支持"
-                : ui.probe_4ch === false
-                  ? "不支持"
-                  : "待检测"}
+            {hapticStream ? "支持" : ui.probe_4ch === false ? "不支持" : "待检测"}
           </Field>
         </PanelSectionRow>
         <PanelSectionRow>

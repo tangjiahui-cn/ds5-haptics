@@ -50,7 +50,6 @@ PROFILE_DEFAULTS = {
     "fix": True,                # 是否尝试建立 4 声道触觉流
     "volume": 100,              # 震动强度（%）
     "audio_out": "hdmi",        # 固定 HDMI
-    "haptics_4ch": None,        # 四声道支持：None=待检测 / True=支持 / False=不支持
 }
 
 # 当前操作的运行中游戏名（CLI 用 --game-name 指定）
@@ -862,12 +861,6 @@ def cmd_profile_set(args):
     prof = load_profile(dd, key)
     if field == "volume":
         prof["volume"] = max(0, min(int(value), 300))
-    elif field == "haptics_4ch":
-        v = str(value).strip().lower()
-        if v in ("", "null", "none", "unknown", "pending"):
-            prof[field] = None
-        else:
-            prof[field] = v in ("1", "true", "yes", "on", "supported")
     elif field in ("enabled", "vibration_enabled", "fix"):
         prof[field] = str(value).lower() in ("1", "true", "yes", "on")
     else:

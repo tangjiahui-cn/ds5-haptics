@@ -249,7 +249,6 @@ class Plugin:
                     await self._engine_cmd("volume", "set", str(self._desired_volume),
                                            "--profile", key)
                     await self._engine_cmd("profile-set", key, "vibration_enabled", "true")
-                    await self._engine_cmd("profile-set", key, "haptics_4ch", "true")
                     self._probe_4ch = True
                 else:
                     await self._engine_cmd("restore", "--profile", key)
@@ -379,9 +378,7 @@ class Plugin:
     async def _main(self):
         self._stop = False
         self._games = await asyncio.to_thread(_installed_games)
-        decky.logger.info("DS5-Haptics backend started (v0.4.17), games=%d", len(self._games))
-        await self._reset_detection_cache(self._plugin_version())
-        await self._clear_failed_cache()
+        decky.logger.info("DS5-Haptics backend started (v0.4.18), games=%d", len(self._games))
         # 清理上次异常退出可能残留的快照
         try:
             if os.path.exists(os.path.join(DATA_DIR, "state.json")):
@@ -473,7 +470,6 @@ class Plugin:
             if r.get("ok"):
                 await self._engine_cmd("volume", "set", str(self._desired_volume),
                                        "--profile", key)
-                await self._engine_cmd("profile-set", key, "haptics_4ch", "true")
                 self._probe_4ch = True
             else:
                 await self._engine_cmd("restore", "--profile", key)
